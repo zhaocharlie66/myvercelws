@@ -1,5 +1,5 @@
+const express = require('express');
 const os = require('os');
-const http = require('http');
 const fs = require('fs');
 const axios = require('axios');
 const net = require('net');
@@ -8,17 +8,22 @@ const crypto = require('crypto');
 const { Buffer } = require('buffer');
 const { exec, execSync } = require('child_process');
 const { WebSocket, createWebSocketStream } = require('ws');
-const UUID = process.env.UUID || '34a042fa-7407-4c83-b1ab-df32cb2e112f'; // 运行哪吒v1,在不同的平台需要改UUID,否则会被覆盖
-const NEZHA_SERVER = process.env.NEZHA_SERVER || '';       // 哪吒v1填写形式：nz.abc.com:8008   哪吒v0填写形式：nz.abc.com
-const NEZHA_PORT = process.env.NEZHA_PORT || '';           // 哪吒v1没有此变量，v0的agent端口为{443,8443,2096,2087,2083,2053}其中之一时开启tls
-const NEZHA_KEY = process.env.NEZHA_KEY || '';             // v1的NZ_CLIENT_SECRET或v0的agent端口                
-const DOMAIN = process.env.DOMAIN || 'mynavigator.vercel.app';       // 填写项目域名或已反代的域名，不带前缀，建议填已反代的域名
-const AUTO_ACCESS = process.env.AUTO_ACCESS || false;      // 是否开启自动访问保活,false为关闭,true为开启,需同时填写DOMAIN变量
-const WSPATH = process.env.WSPATH || UUID.slice(0, 8);     // 节点路径，默认获取uuid前8位
-const SUB_PATH = process.env.SUB_PATH || 'crazy';            // 获取节点的订阅路径
-const NAME = process.env.NAME || 'myVercel';                       // 节点名称
-const PORT = process.env.PORT || 3000;                     // http和ws服务端口
 
+const app = express();
+
+// 环境变量配置
+const UUID = process.env.UUID || '34a042fa-7407-4c83-b1ab-df32cb2e112f';
+const NEZHA_SERVER = process.env.NEZHA_SERVER || '';
+const NEZHA_PORT = process.env.NEZHA_PORT || '';
+const NEZHA_KEY = process.env.NEZHA_KEY || '';
+const DOMAIN = process.env.DOMAIN || 'mynavigator.vercel.app';
+const AUTO_ACCESS = process.env.AUTO_ACCESS || false;
+const WSPATH = process.env.WSPATH || UUID.slice(0, 8);
+const SUB_PATH = process.env.SUB_PATH || 'crazy';
+const NAME = process.env.NAME || 'myVercel';
+const PORT = process.env.PORT || 3000;
+
+// 获取 ISP 信息
 let ISP = '';
 const GetISP = async () => {
   try {
@@ -28,41 +33,42 @@ const GetISP = async () => {
   } catch (e) {
     ISP = 'Unknown';
   }
-}
+};
 GetISP();
 
-const httpServer = http.createServer((req, res) => {
-  if (req.url === '/') {
-    const filePath = path.join(__dirname, 'index.html');
-    fs.readFile(filePath, 'utf8', (err, content) => {
-      if (err) {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('Hello world!');
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(content);
-    });
-    return;
-  } else if (req.url === `/${SUB_PATH}`) {
-    const namePart = NAME ? `${NAME}-${ISP}` : ISP;
-    const vlessURL = `vless://${UUID}@cdns.doon.eu.org:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
-    const trojanURL = `trojan://${UUID}@cdns.doon.eu.org:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
-    const subscription = vlessURL + '\n' + trojanURL;
-    const base64Content = Buffer.from(subscription).toString('base64');
-    
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(base64Content + '\n');
-  } else {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not Found\n');
-  }
+// --- Express 路由定义 ---
+
+// 首页路由
+app.get('/', (req, res) => {
+  const filePath = path.join(__dirname, 'index.html');
+  // 检查文件是否存在，模仿原生代码的逻辑
+  fs.access(filePath, fs.constants.F_OK, (err) => {
+    if (err) {
+      res.status(200).send('Hello world!');
+    } else {
+      res.sendFile(filePath);
+    }
+  });
 });
 
-const wss = new WebSocket.Server({ server: httpServer });
+// 订阅路由
+app.get(`/${SUB_PATH}`, (req, res) => {
+  const namePart = NAME ? `${NAME}-${ISP}` : ISP;
+  const vlessURL = `vless://${UUID}@cdns.doon.eu.org:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
+  const trojanURL = `trojan://${UUID}@cdns.doon.eu.org:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
+  
+  const subscription = vlessURL + '\n' + trojanURL;
+  const base64Content = Buffer.from(subscription).toString('base64');
+  
+  res.type('text/plain');
+  res.send(base64Content + '\n');
+});
+
+// --- 辅助功能函数 (DNS, Vless, Trojan, Nezha) ---
+
 const uuid = UUID.replace(/-/g, "");
 const DNS_SERVERS = ['8.8.4.4', '1.1.1.1'];
-// Custom DNS
+
 function resolveHost(host) {
   return new Promise((resolve, reject) => {
     if (/^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(host)) {
@@ -80,9 +86,7 @@ function resolveHost(host) {
       const dnsQuery = `https://dns.google/resolve?name=${encodeURIComponent(host)}&type=A`;
       axios.get(dnsQuery, {
         timeout: 5000,
-        headers: {
-          'Accept': 'application/dns-json'
-        }
+        headers: { 'Accept': 'application/dns-json' }
       })
       .then(response => {
         const data = response.data;
@@ -99,12 +103,11 @@ function resolveHost(host) {
         tryNextDNS();
       });
     }
-    
     tryNextDNS();
   });
 }
 
-// VLE-SS处理
+// VLESS 处理
 function handleVlessConnection(ws, msg) {
   const [VERSION] = msg;
   const id = msg.slice(1, 17);
@@ -116,8 +119,10 @@ function handleVlessConnection(ws, msg) {
   const host = ATYP == 1 ? msg.slice(i, i += 4).join('.') :
     (ATYP == 2 ? new TextDecoder().decode(msg.slice(i + 1, i += 1 + msg.slice(i, i + 1).readUInt8())) :
     (ATYP == 3 ? msg.slice(i, i += 16).reduce((s, b, i, a) => (i % 2 ? s.concat(a.slice(i - 1, i + 1)) : s), []).map(b => b.readUInt16BE(0).toString(16)).join(':') : ''));
+  
   ws.send(new Uint8Array([VERSION, 0]));
   const duplex = createWebSocketStream(ws);
+  
   resolveHost(host)
     .then(resolvedIP => {
       net.connect({ host: resolvedIP, port }, function() {
@@ -135,14 +140,12 @@ function handleVlessConnection(ws, msg) {
   return true;
 }
 
-// Tro-jan处理
+// Trojan 处理
 function handleTrojanConnection(ws, msg) {
   try {
     if (msg.length < 58) return false;
     const receivedPasswordHash = msg.slice(0, 56).toString();
-    const possiblePasswords = [
-      UUID,
-    ];
+    const possiblePasswords = [UUID];
     
     let matchedPassword = null;
     for (const pwd of possiblePasswords) {
@@ -214,27 +217,8 @@ function handleTrojanConnection(ws, msg) {
     return false;
   }
 }
-// Ws 连接处理
-wss.on('connection', (ws, req) => {
-  const url = req.url || '';
-  ws.once('message', msg => {
-    if (msg.length > 17 && msg[0] === 0) {
-      const id = msg.slice(1, 17);
-      const isVless = id.every((v, i) => v == parseInt(uuid.substr(i * 2, 2), 16));
-      if (isVless) {
-        if (!handleVlessConnection(ws, msg)) {
-          ws.close();
-        }
-        return;
-      }
-    }
 
-    if (!handleTrojanConnection(ws, msg)) {
-      ws.close();
-    }
-  }).on('error', () => {});
-});
-
+// Nezha 客户端相关函数
 const getDownloadUrl = () => {
   const arch = os.arch(); 
   if (arch === 'arm' || arch === 'arm64' || arch === 'aarch64') {
@@ -289,7 +273,7 @@ const runnz = async () => {
       return;
     }
   } catch (e) {
-    // 进程不存在时继续运行nezha
+    // 进程不存在时继续运行
   }
 
   await downloadFile();
@@ -343,18 +327,14 @@ uuid: ${UUID}`;
 
 async function addAccessTask() {
   if (!AUTO_ACCESS) return;
-
-  if (!DOMAIN) {
-    return;
-  }
+  if (!DOMAIN) return;
+  
   const fullURL = `https://${DOMAIN}/${SUB_PATH}`;
   try {
-    const res = await axios.post("https://oooo.serv00.net/add-url", {
+    await axios.post("https://oooo.serv00.net/add-url", {
       url: fullURL
     }, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
+      headers: { 'Content-Type': 'application/json' }
     });
     console.log('Automatic Access Task added successfully');
   } catch (error) {
@@ -367,11 +347,36 @@ const delFiles = () => {
   fs.unlink('config.yaml', () => {}); 
 };
 
-httpServer.listen(PORT, () => {
+// --- 服务器启动 ---
+
+// 使用 app.listen 启动 HTTP 服务器并获取 server 实例
+const server = app.listen(PORT, () => {
   runnz();
   setTimeout(() => {
     delFiles();
   }, 180000);
   addAccessTask();
   console.log(`Server is running on port ${PORT}`);
+});
+
+// 将 WebSocket 服务器挂载到 Express 返回的 HTTP server 实例上
+const wss = new WebSocket.Server({ server });
+
+wss.on('connection', (ws, req) => {
+  ws.once('message', msg => {
+    if (msg.length > 17 && msg[0] === 0) {
+      const id = msg.slice(1, 17);
+      const isVless = id.every((v, i) => v == parseInt(uuid.substr(i * 2, 2), 16));
+      if (isVless) {
+        if (!handleVlessConnection(ws, msg)) {
+          ws.close();
+        }
+        return;
+      }
+    }
+
+    if (!handleTrojanConnection(ws, msg)) {
+      ws.close();
+    }
+  }).on('error', () => {});
 });
