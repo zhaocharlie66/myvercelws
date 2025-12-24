@@ -1,76 +1,84 @@
 const express = require('express');
-const os = require('os');
-const fs = require('fs');
-const axios = require('axios');
-const net = require('net');
-const path = require('path');
-const crypto = require('crypto');
-const { Buffer } = require('buffer');
-const { exec, execSync } = require('child_process');
-const { WebSocket, createWebSocketStream } = require('ws');
+const http = require('http');
+const WebSocket = require('ws');
 
+// 1. 创建 Express 应用
 const app = express();
+const PORT = 3000;
 
-// 环境变量配置
-const UUID = process.env.UUID || '34a042fa-7407-4c83-b1ab-df32cb2e112f';
-const DOMAIN = process.env.DOMAIN || 'mynavigator.vercel.app';
-const AUTO_ACCESS = process.env.AUTO_ACCESS || false;
-const WSPATH = process.env.WSPATH || UUID.slice(0, 8);
-const SUB_PATH = process.env.SUB_PATH || 'crazy';
-const NAME = process.env.NAME || 'myVercel';
-const PORT = process.env.PORT || 3000;
+// 2. 基于 Express 应用创建 HTTP 服务器（关键：WebSocket 需依附 HTTP 服务器）
+const server = http.createServer(app);
 
-// 获取 ISP 信息
-let ISP = '';
-const GetISP = async () => {
-  try {
-    const res = await axios.get('https://api.ip.sb/geoip');
-    const data = res.data;
-    ISP = `${data.country_code}-${data.isp}`.replace(/ /g, '_');
-  } catch (e) {
-    ISP = 'Unknown';
-  }
-};
+// 3. 创建 WebSocket 服务器并关联 HTTP 服务器
+const wss = new WebSocket.Server({ server });
 
-GetISP();
-
-// --- Express 路由定义 ---
-
-// 首页路由
+// -------------------------- Express 普通 HTTP 接口示例 --------------------------
 app.get('/', (req, res) => {
-  const filePath = path.join(__dirname, 'index.html');
-  // 检查文件是否存在，模仿原生代码的逻辑
-  fs.access(filePath, fs.constants.F_OK, (err) => {
-    if (err) {
-      res.status(200).send('Hello world!');
-    } else {
-      res.sendFile(filePath);
-    }
+  res.send(`
+    <h1>Express + WebSocket 测试</h1>
+    <button onclick="sendMsg()">发送测试消息</button>
+    <div id="msgList"></div>
+    <script>
+      // 客户端 WebSocket 连接（前端测试代码）
+      const ws = new WebSocket('ws://' + window.location.host);
+      ws.onopen = () => console.log('WebSocket 连接成功');
+      ws.onmessage = (e) => {
+        const msgDiv = document.createElement('div');
+        msgDiv.textContent = '服务端消息：' + e.data;
+        document.getElementById('msgList').appendChild(msgDiv);
+      };
+      ws.onclose = () => console.log('WebSocket 连接关闭');
+      ws.onerror = (err) => console.error('WebSocket 错误：', err);
+
+      // 发送消息函数
+      function sendMsg() {
+        const msg = 'Hello WebSocket! ' + new Date().toLocaleTimeString();
+        ws.send(msg);
+      }
+    </script>
+  `);
+});
+
+// -------------------------- WebSocket 核心逻辑 --------------------------
+// 监听新的 WebSocket 连接
+wss.on('connection', (ws, req) => {
+  // req 是 HTTP 升级请求对象，可获取客户端 IP、请求头等信息
+  const clientIp = req.socket.remoteAddress;
+  console.log(`新客户端连接：${clientIp}`);
+
+  // 1. 监听客户端发送的消息
+  ws.on('message', (data) => {
+    const msg = data.toString(); // 转换为字符串（默认是 Buffer）
+    console.log(`收到客户端消息：${msg}`);
+
+    // 示例1：回复当前客户端
+    ws.send(`服务端已收到：${msg}（${new Date().toLocaleTimeString()}）`);
+
+    // 示例2：广播消息给所有已连接的客户端（含当前客户端）
+    wss.clients.forEach((client) => {
+      // 确保客户端连接处于打开状态
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(`[广播] ${clientIp}：${msg}`);
+      }
+    });
   });
+
+  // 2. 监听连接关闭
+  ws.on('close', (code, reason) => {
+    console.log(`客户端断开连接：${clientIp}，状态码：${code}，原因：${reason.toString()}`);
+  });
+
+  // 3. 监听连接错误
+  ws.on('error', (error) => {
+    console.error(`客户端连接错误：${clientIp}，错误：${error.message}`);
+  });
+
+  // 4. 主动给新连接的客户端发送欢迎消息
+  ws.send(`欢迎连接 WebSocket 服务器！你的 IP：${clientIp}`);
 });
 
-// 订阅路由
-app.get(`/${SUB_PATH}`, (req, res) => {
-  const namePart = NAME ? `${NAME}-${ISP}` : ISP;
-  const vlessURL = `vless://${UUID}@cdns.doon.eu.org:443?encryption=none&security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
-  const trojanURL = `trojan://${UUID}@cdns.doon.eu.org:443?security=tls&sni=${DOMAIN}&fp=chrome&type=ws&host=${DOMAIN}&path=%2F${WSPATH}#${namePart}`;
-  
-  const subscription = vlessURL + '\n' + trojanURL;
-  const base64Content = Buffer.from(subscription).toString('base64');
-  
-  console.log(`subscription is ${base64Content}`);
-  
-  res.type('text/plain');
-  res.send(base64Content + '\n');
-});
-
-// --- 服务器启动 ---
-
-// 使用 app.listen 启动 HTTP 服务器并获取 server 实例
-const server = app.listen(PORT, () => {
-  runnz();
-  setTimeout(() => {
-    delFiles();
-  }, 180000);
-  console.log(`Server is running on port ${PORT}`);
+// -------------------------- 启动服务器 --------------------------
+server.listen(PORT, () => {
+  console.log(`服务器运行在 http://localhost:${PORT}`);
+  console.log(`WebSocket 地址：ws://localhost:${PORT}`);
 });
