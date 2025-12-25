@@ -6,7 +6,7 @@ const path = require("path");
 const { promisify } = require('util');
 const exec = promisify(require('child_process').exec);
 const { execSync } = require('child_process');        // 只填写UPLOAD_URL将上传节点,同时填写UPLOAD_URL和PROJECT_URL将上传订阅
-const http = require('http');
+const https = require('https');
 const WebSocket = require('ws');
 
 // 1. 创建 Express 应用
