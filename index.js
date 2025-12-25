@@ -6,10 +6,17 @@ const WebSocket = require('ws');
 const app = express();
 const PORT = 3000;
 
-// 2. 基于 Express 应用创建 HTTP 服务器（关键：WebSocket 需依附 HTTP 服务器）
-const server = http.createServer(app);
+// 2. 读取自签名证书
+const serverOptions = {
+  key: fs.readFileSync(path.join(__dirname, 'cert/key.pem')),
+  cert: fs.readFileSync(path.join(__dirname, 'cert/cert.pem'))
+};
 
-// 3. 创建 WebSocket 服务器并关联 HTTP 服务器
+// 3. 基于 Express 应用创建 HTTP 服务器（关键：WebSocket 需依附 HTTP 服务器）
+// 3. 创建 HTTPS 服务器（替代 HTTP 服务器）
+const server = https.createServer(serverOptions, app);
+
+// 4. 创建 WebSocket 服务器并关联 HTTP 服务器
 const wss = new WebSocket.Server({ server });
 
 // -------------------------- Express 普通 HTTP 接口示例 --------------------------
