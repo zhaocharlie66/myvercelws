@@ -78,3 +78,6 @@ server.listen(PORT, () => {
   console.log(`HTTPS 服务器运行在 https://localhost:${PORT}`);
   console.log(`WSS 地址：wss://localhost:${PORT}`);
 });
+
+// *** 关键修复步骤 ***
+module.exports = app;
